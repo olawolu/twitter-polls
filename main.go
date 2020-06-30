@@ -1,12 +1,14 @@
 package main
 
 import (
-	"encoding/json"
-	"log"
-	"net/http"
-	"net/url"
-	"strings"
 	"time"
+	"log"
+	"os"
+	"os/signal"
+	"sync"
+	"syscall"
+
+	"github.com/bitly/go-nsq"
 
 	"gopkg.in/mgo.v2"
 )
@@ -21,16 +23,11 @@ type poll struct {
 	Options []string
 }
 
-// tweet structure
-type tweet struct {
-	Text string
-}
-
 // connect to the database
 func dialdb() error {
 	var err error
 	log.Println("dialing mongodb: localhost")
-	db, err = mgo.Dial(dbHost)
+	db, err = mgo.Dial("localhost")
 	return err
 }
 
@@ -57,71 +54,61 @@ func loadOptions() ([]string, error) {
 	return options, iter.Err()
 }
 
-func readFromTwitter(votes chan<- string) {
-	options, err := loadOptions()
+// publsihVotes takes in a votes channel which is a recieve
+func publishVotes(votes <-chan string) <-chan struct{} {
+	stopchan := make(chan struct{}, 1)
+	pub, err := nsq.NewProducer("localhost:4150", nsq.NewConfig())
 	if err != nil {
-		log.Println("Failed to load options:", err)
-		return
+		log.Println(err)
 	}
-	u, err := url.Parse("https://stream.twitter.com/1.1/statuses/filter.json")
-	if err != nil {
-		log.Println("Creating filter request failed:", err)
-		return
-	}
-	query := make(url.Values)
-	query.Set("track", strings.Join(options, ","))
-	req, err := http.NewRequest("POST", u.String(), strings.NewReader(query.Encode()))
-	if err != nil {
-		log.Println("creating filter request failed:", err)
-		return
-	}
-	resp, err := makeRequest(req, query)
-	if err != nil {
-		log.Println("making request failed:", err)
-		return
-	}
-	reader := resp.Body
-	decoder := json.NewDecoder(reader)
-	for {
-		var t tweet
-		if err := decoder.Decode(&t); err != nil {
-			break
-		}
-		for _, option := range options {
-			if strings.Contains(
-				strings.ToLower(t.Text),
-				strings.ToLower(option),
-			) {
-				log.Println("vote:", option)
-				votes <- option
-			}
-		}
-	}
-}
-
-// Signal channels
-func startTwitterStream(stopchan <-chan struct{}, votes chan<- string) <-chan struct{} {
-	stoppedchan := make(chan struct{}, 1)
 	go func() {
-		defer func() {
-			stoppedchan <- struct{}{}
-		}()
+		for vote := range votes {
+			pub.Publish("votes", []byte(vote)) // publish votes
+		}
+		log.Println("Publisher: Stoppeing")
+		pub.Stop()
+		log.Println("Publisher: Stopped")
+		stopchan <- struct{}{}
+	}()
+	return stopchan
+}
+func main() {
+	var stoplock sync.Mutex // protects stop
+	stop := false
+	stopChan := make(chan struct{}, 1)
+	signalChan := make(chan os.Signal, 1)
+	go func() {
+		<-signalChan
+		stoplock.Lock()
+		stop = true
+		stoplock.Unlock()
+		log.Println("Stopping...")
+		stopChan <- struct{}{}
+		closeConn()
+	}()
+	signal.Notify(signalChan, syscall.SIGINT, syscall.SIGTERM)
+	if err := dialdb(); err != nil {
+		log.Fatalln("failed to dial MongoDB:",err)
+	}
+	defer closedb()
+
+	// start things 
+	votes := make(chan string) // channel for votes
+	publisherStoppedChan := publishVotes(votes)
+	twitterStoppedChan := startTwitterStream(stopChan, votes)
+	go func(){
 		for {
-			select {
-			case <-stopchan:
-				log.Println("Stopping Twitter...")
+			time.Sleep(1 * time.Minute)
+			closeConn()
+			stoplock.Lock()
+			if stop {
+				stoplock.Unlock()
 				return
-			default:
-				log.Println("Querying Twitter...")
-				readFromTwitter(votes)
-				log.Println(" (waiting)")
-				time.Sleep(10 * time.Second) // wait before reconnecting
 			}
+			stoplock.Unlock()
 		}
 	}()
-	return stoppedchan
-}
-
-func main() {
-
+	<-twitterStoppedChan
+	close(votes)
+	<-publisherStoppedChan
 }

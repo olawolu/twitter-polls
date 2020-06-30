@@ -1,12 +1,14 @@
 package main
 
 import (
+	"encoding/json"
 	"io"
 	"log"
 	"net"
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -38,6 +40,11 @@ func dial(netw, addr string) (net.Conn, error) {
 	}
 	conn = netc
 	return netc, nil
+}
+
+// tweet structure
+type tweet struct {
+	Text string
 }
 
 // Connection is periodically closed and a new one initiated to reload options from the database
@@ -78,6 +85,50 @@ func setupTwitterAuth() {
 
 }
 
+
+
+func readFromTwitter(votes chan<- string) {
+	options, err := loadOptions()
+	if err != nil {
+		log.Println("Failed to load options:", err)
+		return
+	}
+	u, err := url.Parse("https://stream.twitter.com/1.1/statuses/filter.json")
+	if err != nil {
+		log.Println("Creating filter request failed:", err)
+		return
+	}
+	query := make(url.Values)
+	query.Set("track", strings.Join(options, ","))
+	req, err := http.NewRequest("POST",u.String(),strings.NewReader(query.Encode()))
+	if err != nil {
+		log.Println("creating filter request failed:", err)
+		return
+	}
+	resp, err := makeRequest(req, query)
+	if err != nil {
+		log.Println("making request failed:", err)
+		return
+	}
+	reader := resp.Body
+	decoder := json.NewDecoder(reader)
+	for {
+		var t tweet
+		if err := decoder.Decode(&t); err != nil {
+			break
+		}
+		for _, option := range options {
+			if strings.Contains(
+				strings.ToLower(t.Text),
+				strings.ToLower(option),
+			) {
+				log.Println("vote:", option)
+				votes <- option
+			}
+		}
+	}
+}
+
 func makeRequest(req *http.Request, params url.Values) (*http.Response, error) {
 	// sync.Once is used to ensure initialization code gets run only once
 	authSetUpOnce.Do(func() {
@@ -89,8 +140,32 @@ func makeRequest(req *http.Request, params url.Values) (*http.Response, error) {
 		}
 	})
 	formEnc := params.Encode()
-	req.Header.Set("Content-Type", "application/x-www-form0 urlencoded")
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Content-Length", strconv.Itoa(len(formEnc)))
 	req.Header.Set("Authorization", authClient.AuthorizationHeader(creds, "POST", req.URL, params))
 	return httpClient.Do(req)
+}
+
+// startTwitterStream takes in a recieve only channel (stopchan) to recieve signals on when the goroutine should stop.
+// A send only channel (votes) 
+func startTwitterStream(stopchan <-chan struct{}, votes chan<- string) <-chan struct{} {
+	stoppedchan := make(chan struct{}, 1)
+	go func() {
+		defer func() {
+			stoppedchan <- struct{}{}
+		}()
+		for {
+			select {
+			case <-stopchan:
+				log.Println("Stopping Twitter...")
+				return
+			default:
+				log.Println("Querying Twitter...")
+				readFromTwitter(votes)
+				log.Println(" (waiting)")
+				time.Sleep(10 * time.Second) // wait before reconnecting
+			}
+		}
+	}()
+	return stoppedchan
 }
