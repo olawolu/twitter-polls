@@ -85,38 +85,55 @@ func setupTwitterAuth() {
 
 }
 
-
-
+// Takes a send only channel called votes; this is how this function
+// will inform the rest of our program that it has noticed a vote on Twitter
 func readFromTwitter(votes chan<- string) {
+	// load options from all the polls data
 	options, err := loadOptions()
 	if err != nil {
 		log.Println("Failed to load options:", err)
 		return
 	}
+
+	// create a url.URL object that describes the appropriate endpoint
 	u, err := url.Parse("https://stream.twitter.com/1.1/statuses/filter.json")
 	if err != nil {
 		log.Println("Creating filter request failed:", err)
 		return
 	}
+
+	// build a url.Values object called query, set options as a comma-separated list
 	query := make(url.Values)
 	query.Set("track", strings.Join(options, ","))
-	req, err := http.NewRequest("POST",u.String(),strings.NewReader(query.Encode()))
+
+	// Make a POST request using the encoded url.Values object (query) as the body
+	req, err := http.NewRequest("POST", u.String(), strings.NewReader(query.Encode()))
 	if err != nil {
 		log.Println("creating filter request failed:", err)
 		return
 	}
+
+	// Pass it to makeRequest along with the query object itself
 	resp, err := makeRequest(req, query)
 	if err != nil {
 		log.Println("making request failed:", err)
 		return
 	}
+
+	// make a new json.Decoder from the body of the request
 	reader := resp.Body
 	decoder := json.NewDecoder(reader)
+
+	// keep reading inside an infinite for loop by calling the Decode method
 	for {
+		// Decode tweet into t
 		var t tweet
 		if err := decoder.Decode(&t); err != nil {
 			break
 		}
+
+		// Iterate over all possible options, if the tweet has mentioned it, 
+		// we send it on the votes channel.
 		for _, option := range options {
 			if strings.Contains(
 				strings.ToLower(t.Text),
@@ -147,7 +164,7 @@ func makeRequest(req *http.Request, params url.Values) (*http.Response, error) {
 }
 
 // startTwitterStream takes in a recieve only channel (stopchan) to recieve signals on when the goroutine should stop.
-// A send only channel (votes) 
+// A send only channel (votes)
 func startTwitterStream(stopchan <-chan struct{}, votes chan<- string) <-chan struct{} {
 	stoppedchan := make(chan struct{}, 1)
 	go func() {
