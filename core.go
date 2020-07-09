@@ -8,7 +8,7 @@ import (
 
 	"gopkg.in/mgo.v2/bson"
 
-	"github.com/bitly/go-nsq"
+	"github.com/nsqio/go-nsq"
 	"gopkg.in/mgo.v2"
 )
 
@@ -33,7 +33,7 @@ func connectDB() *mgo.Collection {
 }
 
 // In order to count the votes, the messages are consumed in the votes topic in NSQ
-func consume() *nsq.Consumer{
+func consume() *nsq.Consumer {
 	// var counts map[string]int // hold the vote counts
 	// var countsLock sync.Mutex
 
