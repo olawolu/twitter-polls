@@ -1,4 +1,4 @@
-module github.com/olawolu
+module github.com/olawolu/tweetreader
 
 go 1.14
 
