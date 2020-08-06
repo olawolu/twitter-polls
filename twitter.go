@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"log"
@@ -29,7 +30,7 @@ var (
 	httpClient    *http.Client
 )
 
-func dial(netw, addr string) (net.Conn, error) {
+func dial(ctx context.Context, netw, addr string) (net.Conn, error) {
 	if conn != nil {
 		conn.Close()
 		conn = nil
@@ -152,7 +153,8 @@ func makeRequest(req *http.Request, params url.Values) (*http.Response, error) {
 		setupTwitterAuth()
 		httpClient = &http.Client{
 			Transport: &http.Transport{
-				Dial: dial,
+				DialContext: dial,
+				// Dial: dial,
 			},
 		}
 	})

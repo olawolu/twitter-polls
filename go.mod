@@ -3,6 +3,7 @@ module github.com/olawolu/tweetreader
 go 1.14
 
 require (
+	github.com/ChimeraCoder/tokenbucket v0.0.0-20131201223612-c5a927568de7 // indirect
 	github.com/garyburd/go-oauth v0.0.0-20180319155456-bca2e7f09a17
 	github.com/joeshaw/envdecode v0.0.0-20200121155833-099f1fc765bd
 	github.com/nsqio/go-nsq v1.0.8
