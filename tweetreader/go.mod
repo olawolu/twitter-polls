@@ -1,4 +1,4 @@
-module github.com/olawolu/tweetreader
+module github.com/olawolu/twitter-polls/tweetreader
 
 go 1.14
 

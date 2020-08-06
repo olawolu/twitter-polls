@@ -1,4 +1,4 @@
-module github.com/olawolu/rest-api
+module github.com/olawolu/twitter-polls/rest-api
 
 go 1.14
 

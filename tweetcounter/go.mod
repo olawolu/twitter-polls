@@ -1,4 +1,4 @@
-module github.com/olawolu/tweetcounter
+module github.com/olawolu/twitter-polls/tweetcounter
 
 go 1.14
 
