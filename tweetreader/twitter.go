@@ -8,13 +8,13 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/garyburd/go-oauth/oauth"
-	"github.com/joeshaw/envdecode"
 )
 
 // First we create a connection to Twitter's streaming APIs
@@ -35,7 +35,7 @@ func dial(ctx context.Context, netw, addr string) (net.Conn, error) {
 		conn.Close()
 		conn = nil
 	}
-	netc, err := net.DialTimeout(netw, addr, 5*time.Second)
+	netc, err := net.DialTimeout(netw, addr, 10*time.Second)
 	if err != nil {
 		return nil, err
 	}
@@ -45,7 +45,18 @@ func dial(ctx context.Context, netw, addr string) (net.Conn, error) {
 
 // tweet structure
 type tweet struct {
-	Text string
+	CreatedAt string `json:"created_at"`
+	Text      string `json:"text"`
+	User      struct {
+		Name       string `json:"name"`
+		ScreenName string `json:"screen_name"`
+	} `json:"user"`
+	// Place            interface{}              `json:"place"`
+	// Urls             []map[string]interface{} `json:"urls"`
+	// Entities         struct  {
+	// 	Hashtags []interface{}
+	// }
+	// ExtendedEntities map[string]interface{}   `json:"extended_entities"`
 }
 
 // Connection is periodically closed and a new one initiated to reload options from the database
@@ -62,25 +73,21 @@ func closeConn() {
 }
 
 func setupTwitterAuth() {
-	// A struct type to store the environment variables required to authenticate with twitter.
-	var ts struct {
-		ConsumerKey    string `env:"TWITTER_KEY,required"`
-		ConsumerSecret string `env:"TWITTER_SECRET,required"`
-		AccessToken    string `env:"TWITTER_ACCESS_TOKEN,required"`
-		AccessSecret   string `env:"TWITTER_ACCESS_SECRET,required"`
-	}
-	if err := envdecode.Decode(&ts); err != nil {
-		log.Fatalln(err)
-	}
+	var ts = make(map[string]string)
+
+	ts["ConsumerKey"] = os.Getenv("TWITTER_KEY")
+	ts["ConsumerSecret"] = os.Getenv("TWITTER_SECRET")
+	ts["AccessToken"] = os.Getenv("TWITTER_ACCESS_TOKEN")
+	ts["AccessSecret"] = os.Getenv("TWITTER_ACCESS_SECRET")
 
 	creds = &oauth.Credentials{
-		Token:  ts.AccessToken,
-		Secret: ts.AccessSecret,
+		Token:  ts["AccessToken"],
+		Secret: ts["AccessSecret"],
 	}
 	authClient = &oauth.Client{
 		Credentials: oauth.Credentials{
-			Token:  ts.ConsumerKey,
-			Secret: ts.ConsumerSecret,
+			Token:  ts["ConsumerKey"],
+			Secret: ts["ConsumerSecret"],
 		},
 	}
 
@@ -88,9 +95,12 @@ func setupTwitterAuth() {
 
 // Takes a send only channel called votes; this is how this function
 // will inform the rest of our program that it has noticed a vote on Twitter
-func readFromTwitter(votes chan<- string) {
+// votes chan<- string
+func readFromTwitter(votes chan<- tweet) {
 	// load options from all the polls data
 	options, err := loadOptions()
+	log.Println("vote:", options)
+
 	if err != nil {
 		log.Println("Failed to load options:", err)
 		return
@@ -133,15 +143,19 @@ func readFromTwitter(votes chan<- string) {
 			break
 		}
 
-		// Iterate over all possible options, if the tweet has mentioned it, 
+		// Iterate over all possible options, if the tweet has mentioned it,
 		// we send it on the votes channel.
 		for _, option := range options {
+
 			if strings.Contains(
 				strings.ToLower(t.Text),
 				strings.ToLower(option),
 			) {
+
 				log.Println("vote:", option)
-				votes <- option
+				// log.Println(t.User.ScreenName)
+
+				votes <- t
 			}
 		}
 	}
@@ -154,20 +168,19 @@ func makeRequest(req *http.Request, params url.Values) (*http.Response, error) {
 		httpClient = &http.Client{
 			Transport: &http.Transport{
 				DialContext: dial,
-				// Dial: dial,
 			},
 		}
 	})
 	formEnc := params.Encode()
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Content-Length", strconv.Itoa(len(formEnc)))
-	req.Header.Set("Authorization", authClient.AuthorizationHeader(creds, "POST", req.URL, params))
+	authClient.SetAuthorizationHeader(req.Header, creds, "POST", req.URL, params)
 	return httpClient.Do(req)
 }
 
 // startTwitterStream takes in a recieve only channel (stopchan) to recieve signals on when the goroutine should stop.
 // A send only channel (votes)
-func startTwitterStream(stopchan <-chan struct{}, votes chan<- string) <-chan struct{} {
+func startTwitterStream(stopchan <-chan struct{}, votes chan<- tweet) <-chan struct{} {
 	stoppedchan := make(chan struct{}, 1)
 	go func() {
 		defer func() {
