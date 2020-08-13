@@ -1,12 +1,15 @@
 package main
 
 import (
-	"time"
+	"bytes"
+	"encoding/gob"
+	"encoding/json"
 	"log"
 	"os"
 	"os/signal"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/nsqio/go-nsq"
 
@@ -14,7 +17,7 @@ import (
 )
 
 var (
-	dbHost = "localhost"
+	dbHost = os.Getenv("DBHOST")
 	db     *mgo.Session
 )
 
@@ -26,8 +29,8 @@ type poll struct {
 // connect to the database
 func dialdb() error {
 	var err error
-	log.Println("dialing mongodb: localhost")
-	db, err = mgo.Dial("localhost")
+	log.Printf("dialing mongodb: %s", dbHost)
+	db, err = mgo.Dial(dbHost)
 	return err
 }
 
@@ -54,8 +57,18 @@ func loadOptions() ([]string, error) {
 	return options, iter.Err()
 }
 
-// publsihVotes takes in a votes channel which is a recieve
-func publishVotes(votes <-chan string) <-chan struct{} {
+func encodeTweet(t tweet) []byte {
+	var buf bytes.Buffer
+	enc := gob.NewEncoder(&buf)
+	err := enc.Encode(t)
+	if err != nil {
+		log.Fatal("encode error:", err)
+	}
+	return buf.Bytes()
+}
+
+// publsihvotes takes in a votes channel which is a recieve
+func publishVotes(votes <-chan tweet) <-chan struct{} {
 	stopchan := make(chan struct{}, 1)
 	pub, err := nsq.NewProducer("localhost:4150", nsq.NewConfig())
 	if err != nil {
@@ -63,9 +76,17 @@ func publishVotes(votes <-chan string) <-chan struct{} {
 	}
 	go func() {
 		for vote := range votes {
-			pub.Publish("votes", []byte(vote)) // publish votes
+			log.Println(vote)
+			// TODO: encode Tweets as bytes
+			// pub.Publish("votes", encodeTweet(vote)) // publish votes
+			b, err := json.Marshal(vote)
+			if err != nil {
+				log.Println("Marshall error: ", err)
+			}
+			pub.Publish("votes", b) // publish votes
+
 		}
-		log.Println("Publisher: Stoppeing")
+		log.Println("Publisher: Stopping")
 		pub.Stop()
 		log.Println("Publisher: Stopped")
 		stopchan <- struct{}{}
@@ -88,15 +109,15 @@ func main() {
 	}()
 	signal.Notify(signalChan, syscall.SIGINT, syscall.SIGTERM)
 	if err := dialdb(); err != nil {
-		log.Fatalln("failed to dial MongoDB:",err)
+		log.Fatalln("failed to dial MongoDB:", err)
 	}
 	defer closedb()
 
-	// start things 
-	votes := make(chan string) // channel for votes
+	// start things
+	votes := make(chan tweet) // channel for votes
 	publisherStoppedChan := publishVotes(votes)
 	twitterStoppedChan := startTwitterStream(stopChan, votes)
-	go func(){
+	go func() {
 		for {
 			time.Sleep(1 * time.Minute)
 			closeConn()
