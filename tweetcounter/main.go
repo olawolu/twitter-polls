@@ -12,7 +12,7 @@ import (
 )
 
 var fatalErr error
-var counts map[string]int // hold the vote counts
+var counts map[tweet]int // hold the vote counts
 var countsLock sync.Mutex
 
 func main() {
@@ -34,7 +34,9 @@ func main() {
 		log.Println("Closing database connection...")
 		db.Close()
 	}()
-	pollData := db.DB("ballots").C("polls")
+	// pollData := db.DB("ballots").C("polls")
+	collection := db.DB("ballots").C("tweets")
+
 	q := consume()
 	ticker := time.NewTicker(updateDuration)
 	termChan := make(chan os.Signal, 1)
@@ -42,7 +44,8 @@ func main() {
 	for {
 		select {
 		case <-ticker.C:
-			doCount(&countsLock, &counts, pollData)
+			// doCount(&countsLock, &counts, pollData)
+			doPush(&countsLock, &counts, collection)
 		case <-termChan:
 			ticker.Stop()
 			q.Stop()
