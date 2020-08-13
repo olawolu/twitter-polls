@@ -17,7 +17,7 @@ import (
 // set values with the same name in the same context, which would create problems.
 
 // We create a simple (private) struct for our keys and a helper method in order to get the value out.
-type contectKey struct {
+type contextKey struct {
 	name string
 }
 
@@ -27,7 +27,7 @@ type Server struct {
 }
 
 // Key to store API key value in
-var contextKeyAPIKey = &contectKey{"api-key"}
+var contextKeyAPIKey = &contextKey{"api-key"}
 
 // APIKey is an helper funtion to extract the key, given a context
 func APIKey(ctx context.Context) (string, bool) {

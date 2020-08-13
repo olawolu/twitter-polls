@@ -1,4 +1,5 @@
 *.sh
-tweetreader
-tweetcounter
-web
+tweetreader/tweetreader
+tweetcounter/counter
+polls-web-client/web
+

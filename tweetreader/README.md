@@ -1,5 +1,27 @@
-##  Tweetreader is a program that:
+## Requirements
+-   go
+-   Mongodb
+-   nsq
 
+## Run
+-   start the nsq environment
+>   `~$`    nsqlookupd
+-   in a seperate terminal window
+>   `~$`    nsqd --lookupd-tcp-address=localhost:4160
+-   ensure mongo is installed and the mongo daemon is running
+-   run the `mongo` command to open a database and add a test poll
+-   run the following code
+>   `> `   use ballots\
+>   switched to db ballots\
+>   `> `    db.polls.insert({\
+>   `... `  "title":"Test poll",\
+>   `... `  "options":["happy","sad","fail", win"]})
+-   exit the mongo shell and run the following
+>   nsq_tail --topic="votes" --lookupd-http-address=localhost:4161
+-   in a seperate terminal
+>   go build -o tweetreader\
+>   ./tweetreader
+##  Tweetreader is a program that:
 -   Loads all polls from a datastore and collect all options from the options array in each document
 -   Opens and maintains a connection to Twitter's streaming APIs looking for any mention of the options
 -   Figures out which option is mentioned and push that option through to NSQ for each tweet that matches the filter
@@ -21,5 +43,3 @@ To use the streaming API, authentication credentials from twitter is required.
     -   TWITTER_SECRET
     -   TWITTER_ACCESS_TOKEN
     -   TWITTER_ACCESS_SECRET
-
-- setup.sh is a file that contains configuration settings such as environment variables
