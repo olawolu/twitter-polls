@@ -1,8 +1,6 @@
 package main
 
 import (
-	"bytes"
-	"encoding/gob"
 	"encoding/json"
 	"log"
 	"os"
@@ -48,23 +46,12 @@ func loadOptions() ([]string, error) {
 	// query the polls collection in ballots without filter *Find(nil)*
 	// and return an iterator capable of going over the returned polls.
 	iter := db.DB("ballots").C("polls").Find(nil).Iter()
-
 	// loop over the results and load the options into the options slice
 	for iter.Next(&p) {
 		options = append(options, p.Options...)
 	}
 	iter.Close()
 	return options, iter.Err()
-}
-
-func encodeTweet(t tweet) []byte {
-	var buf bytes.Buffer
-	enc := gob.NewEncoder(&buf)
-	err := enc.Encode(t)
-	if err != nil {
-		log.Fatal("encode error:", err)
-	}
-	return buf.Bytes()
 }
 
 // publsihvotes takes in a votes channel which is a recieve
@@ -77,14 +64,11 @@ func publishVotes(votes <-chan tweet) <-chan struct{} {
 	go func() {
 		for vote := range votes {
 			log.Println(vote)
-			// TODO: encode Tweets as bytes
-			// pub.Publish("votes", encodeTweet(vote)) // publish votes
 			b, err := json.Marshal(vote)
 			if err != nil {
 				log.Println("Marshall error: ", err)
 			}
 			pub.Publish("votes", b) // publish votes
-
 		}
 		log.Println("Publisher: Stopping")
 		pub.Stop()
@@ -93,6 +77,7 @@ func publishVotes(votes <-chan tweet) <-chan struct{} {
 	}()
 	return stopchan
 }
+
 func main() {
 	var stoplock sync.Mutex // protects stop
 	stop := false
