@@ -28,7 +28,24 @@ var (
 	creds         *oauth.Credentials
 	authSetUpOnce sync.Once
 	httpClient    *http.Client
+	baseURL       = "https://stream.twitter.com/1.1/statuses/filter.json"
+	options []string
 )
+
+// tweet structure
+type tweet struct {
+	CreatedAt string `json:"created_at"`
+	Text      string `json:"text"`
+	User      struct {
+		Name       string `json:"name"`
+		ScreenName string `json:"screen_name"`
+	} `json:"user"`
+}
+
+// Connection is periodically closed and a new one initiated to reload options from the database
+//  at regular intervals. The closeConn function handles this by closing the connection
+// and also closes io.ReadCloser, which is used to read the body of responses
+
 
 func dial(ctx context.Context, netw, addr string) (net.Conn, error) {
 	if conn != nil {
@@ -42,26 +59,6 @@ func dial(ctx context.Context, netw, addr string) (net.Conn, error) {
 	conn = netc
 	return netc, nil
 }
-
-// tweet structure
-type tweet struct {
-	CreatedAt string `json:"created_at"`
-	Text      string `json:"text"`
-	User      struct {
-		Name       string `json:"name"`
-		ScreenName string `json:"screen_name"`
-	} `json:"user"`
-	// Place            interface{}              `json:"place"`
-	// Urls             []map[string]interface{} `json:"urls"`
-	// Entities         struct  {
-	// 	Hashtags []interface{}
-	// }
-	// ExtendedEntities map[string]interface{}   `json:"extended_entities"`
-}
-
-// Connection is periodically closed and a new one initiated to reload options from the database
-//  at regular intervals. The closeConn function handles this by closing the connection
-// and also closes io.ReadCloser, which is used to read the body of responses
 
 func closeConn() {
 	if conn != nil {
@@ -93,38 +90,17 @@ func setupTwitterAuth() {
 
 }
 
-// Takes a send only channel called votes; this is how this function
+// readFromTwitter takes a send only channel called votes; this is how this function
 // will inform the rest of our program that it has noticed a vote on Twitter
 // votes chan<- string
 func readFromTwitter(votes chan<- tweet) {
-	// load options from all the polls data
-	options, err := loadOptions()
-	log.Println("vote:", options)
-
+	// build request object and query
+	req, query, err := buildQuery()
 	if err != nil {
-		log.Println("Failed to load options:", err)
-		return
+		log.Println(err)
 	}
 
-	// create a url.URL object that describes the appropriate endpoint
-	u, err := url.Parse("https://stream.twitter.com/1.1/statuses/filter.json")
-	if err != nil {
-		log.Println("Creating filter request failed:", err)
-		return
-	}
-
-	// build a url.Values object called query, set options as a comma-separated list
-	query := make(url.Values)
-	query.Set("track", strings.Join(options, ","))
-
-	// Make a POST request using the encoded url.Values object (query) as the body
-	req, err := http.NewRequest("POST", u.String(), strings.NewReader(query.Encode()))
-	if err != nil {
-		log.Println("creating filter request failed:", err)
-		return
-	}
-
-	// Pass it to makeRequest along with the query object itself
+	// Pass the query and request object to makeRequest
 	resp, err := makeRequest(req, query)
 	if err != nil {
 		log.Println("making request failed:", err)
@@ -142,40 +118,18 @@ func readFromTwitter(votes chan<- tweet) {
 		if err := decoder.Decode(&t); err != nil {
 			break
 		}
-
 		// Iterate over all possible options, if the tweet has mentioned it,
-		// we send it on the votes channel.
+		// send it on the votes channel.
 		for _, option := range options {
-
 			if strings.Contains(
 				strings.ToLower(t.Text),
 				strings.ToLower(option),
 			) {
-
 				log.Println("vote:", option)
-				// log.Println(t.User.ScreenName)
-
 				votes <- t
 			}
 		}
 	}
-}
-
-func makeRequest(req *http.Request, params url.Values) (*http.Response, error) {
-	// sync.Once is used to ensure initialization code gets run only once
-	authSetUpOnce.Do(func() {
-		setupTwitterAuth()
-		httpClient = &http.Client{
-			Transport: &http.Transport{
-				DialContext: dial,
-			},
-		}
-	})
-	formEnc := params.Encode()
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("Content-Length", strconv.Itoa(len(formEnc)))
-	authClient.SetAuthorizationHeader(req.Header, creds, "POST", req.URL, params)
-	return httpClient.Do(req)
 }
 
 // startTwitterStream takes in a recieve only channel (stopchan) to recieve signals on when the goroutine should stop.
@@ -200,4 +154,51 @@ func startTwitterStream(stopchan <-chan struct{}, votes chan<- tweet) <-chan str
 		}
 	}()
 	return stoppedchan
+}
+
+// buildQuery creates a request to the url endpoint with a query string
+func buildQuery() (req *http.Request, query url.Values, err error) {
+	// load options from all the polls data
+	options, err = loadOptions()
+	log.Println("vote:", options)
+	if err != nil {
+		log.Println("Failed to load options:")
+		return nil, nil, err
+	}
+
+	// create a url object
+	u, err := url.Parse(baseURL)
+	if err != nil {
+		log.Println("Failed to parse url:")
+		return nil, nil, err
+	}
+	
+	// builld query string
+	query = make(url.Values)
+	query.Set("track", strings.Join(options, ","))
+
+	// build the request object
+	req, err = http.NewRequest("POST", u.String(), strings.NewReader(query.Encode()))
+	if err != nil {
+		log.Println("Failed to create request object:")
+		return nil, nil, err
+	}
+	return req, query, nil
+}
+
+func makeRequest(req *http.Request, params url.Values) (*http.Response, error) {
+	// sync.Once is used to ensure initialization code gets run only once
+	authSetUpOnce.Do(func() {
+		setupTwitterAuth()
+		httpClient = &http.Client{
+			Transport: &http.Transport{
+				DialContext: dial,
+			},
+		}
+	})
+	formEnc := params.Encode()
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Content-Length", strconv.Itoa(len(formEnc)))
+	authClient.SetAuthorizationHeader(req.Header, creds, "POST", req.URL, params)
+	return httpClient.Do(req)
 }
